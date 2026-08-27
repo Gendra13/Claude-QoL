@@ -1,1 +1,2 @@
-Fixed "Copy as rich text" showing up in the wrong places
+Re-added Opus 4.5
+Optimized TTS
