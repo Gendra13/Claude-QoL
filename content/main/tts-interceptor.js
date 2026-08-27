@@ -2,8 +2,9 @@
 (function () {
 	'use strict';
 
-	// Helper to fetch conversation and find new assistant message
-	async function findNewAssistantMessage(orgId, conversationId, responseUuid, requestSentTime, maxRetries = 2) {
+	// Fallback for when message_start didn't yield a UUID: fetch the conversation and
+	// pick the newest assistant message. Only reachable if the stream parse failed.
+	async function findNewAssistantMessage(orgId, conversationId, requestSentTime, maxRetries = 2) {
 		for (let attempt = 0; attempt <= maxRetries; attempt++) {
 			if (attempt > 0) {
 				console.log(`Assistant message not found, retrying (${attempt}/${maxRetries})...`);
@@ -23,15 +24,10 @@
 				const data = await response.json();
 				const messages = data.chat_messages || [];
 
-				let assistantMessage;
-				if (responseUuid) {
-					assistantMessage = messages.find(msg => msg.uuid === responseUuid);
-				} else {
-					assistantMessage = messages.find(msg =>
-						msg.sender === 'assistant' &&
-						msg.created_at > requestSentTime
-					);
-				}
+				const assistantMessage = messages.find(msg =>
+					msg.sender === 'assistant' &&
+					msg.created_at > requestSentTime
+				);
 
 				if (assistantMessage) {
 					return assistantMessage;
@@ -99,6 +95,10 @@
 					const reader = clonedResponse.body.getReader();
 					const decoder = new TextDecoder();
 					let responseUuid = null;
+					// message_start can straddle a chunk boundary, which would leave us parsing
+					// truncated JSON. Carry the incomplete trailing line into the next chunk.
+					let sseBuffer = '';
+					let scanningForUuid = true;
 
 					// Consume until done, extracting response UUID from message_start
 					while (true) {
@@ -109,18 +109,25 @@
 						const chunk = decoder.decode(value, { stream: true });
 
 						// Extract response UUID from the message_start event
-						if (!responseUuid && chunk.includes('"type":"message_start"')) {
-							const lines = chunk.split('\n');
+						if (scanningForUuid) {
+							sseBuffer += chunk;
+							const lines = sseBuffer.split('\n');
+							sseBuffer = lines.pop();
 							for (const line of lines) {
 								const trimmed = line.trim();
-								if (trimmed.startsWith('data: ') && trimmed.includes('"message_start"')) {
-									try {
-										const parsed = JSON.parse(trimmed.substring(6));
-										responseUuid = parsed.message?.uuid;
-										console.log('TTS: Got response UUID from message_start:', responseUuid);
-									} catch (e) {}
-									break;
-								}
+								if (!trimmed.startsWith('data: ') || !trimmed.includes('"message_start"')) continue;
+								try {
+									const parsed = JSON.parse(trimmed.substring(6));
+									responseUuid = parsed.message?.uuid;
+									console.log('TTS: Got response UUID from message_start:', responseUuid);
+								} catch (e) {}
+								if (responseUuid) break;
+							}
+							// message_start is the first event in the stream, so if it hasn't turned up
+							// early it isn't coming - stop buffering rather than hold the whole response.
+							if (responseUuid || sseBuffer.length > 65536) {
+								scanningForUuid = false;
+								sseBuffer = '';
 							}
 						}
 
@@ -133,13 +140,16 @@
 
 					reader.releaseLock();
 					console.log('Completed reading completion response stream for TTS handling');
-					// Now fetch the conversation to find the new message
-					const assistantMessage = await findNewAssistantMessage(orgId, conversationId, responseUuid, requestSentTime);
-					console.log('Found assistant message for TTS:', assistantMessage);
-					if (assistantMessage) {
+					// The UUID from message_start is all the ISOLATED side needs - it only uses it
+					// to locate the message in the DOM. Refetching the whole conversation to look
+					// up a UUID we already have is pure waste, so only do it if parsing failed.
+					const messageUuid = responseUuid
+						?? (await findNewAssistantMessage(orgId, conversationId, requestSentTime))?.uuid;
+
+					if (messageUuid) {
 						window.postMessage({
 							type: 'tts-auto-speak',
-							messageUuid: assistantMessage.uuid
+							messageUuid
 						}, '*');
 					} else {
 						console.log('No new assistant message found after retries');
