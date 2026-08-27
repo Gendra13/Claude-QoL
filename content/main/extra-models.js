@@ -152,8 +152,10 @@
                 const sel = extra.selector;
                 const existing = surface.models.find(m => m.id === sel.id);
                 if (existing) {
-                    // Already listed (e.g. as "deprecated") — just make it visible.
+                    // Already listed (e.g. as "deprecated", or with `disabled: true`) —
+                    // move it into view and clear the flag that greys it out.
                     existing.section = sel.section;
+                    delete existing.disabled;
                 } else {
                     // Absent from this surface — inject a fresh, per-surface copy.
                     surface.models.push(structuredClone(sel));
