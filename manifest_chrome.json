@@ -45,6 +45,7 @@
 				"https://claude.ai/*"
 			],
 			"js": [
+				"content/main/extra-models.js",
 				"lib/jszip.min.js",
 				"lib/mime.min.js",
 				"content/helpers/claude-styles.js",
@@ -60,7 +61,6 @@
 				"content/main/tts-interceptor.js",
 				"content/main/tts-ws-interceptor.js",
 				"content/main/image-extractor.js",
-				"content/main/extra-models.js",
 				"lib/marked.min.js",
 				"content/main/rich-copy-interceptor.js"
 			],

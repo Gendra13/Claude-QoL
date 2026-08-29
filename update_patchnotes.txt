@@ -1,2 +1,1 @@
-Re-added Opus 4.5
-Optimized TTS
+Change MAIN scripts load order to fix extra models (Opus 4.5) staying disabled

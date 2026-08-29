@@ -153,9 +153,11 @@
                 const existing = surface.models.find(m => m.id === sel.id);
                 if (existing) {
                     // Already listed (e.g. as "deprecated", or with `disabled: true`) —
-                    // move it into view and clear the flag that greys it out.
+                    // move it into view and clear the flags that grey it out. The dropdown
+                    // greys on `disabled_reason`, which only some accounts are served.
                     existing.section = sel.section;
                     delete existing.disabled;
+                    delete existing.disabled_reason;
                 } else {
                     // Absent from this surface — inject a fresh, per-surface copy.
                     surface.models.push(structuredClone(sel));
