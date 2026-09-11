@@ -1,1 +1,2 @@
 Removed global text search - claude.ai's own search now searches message text. Chat search (all branches within a chat) is unchanged.
+Added settings for image inlining
