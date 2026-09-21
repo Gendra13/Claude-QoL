@@ -1,2 +1,1 @@
-Removed global text search - claude.ai's own search now searches message text. Chat search (all branches within a chat) is unchanged.
-Added settings for image inlining
+Fix advanced edit/forking not working properly due to request bodies now being sometimes gzipped.
