@@ -1,1 +1,2 @@
-Fix advanced edit/forking not working properly due to request bodies now being sometimes gzipped.
+Support Opus 5.5
+UI improvements on mobile/vertical layouts
