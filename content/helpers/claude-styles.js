@@ -1197,6 +1197,18 @@ function createClaudeTooltip(element, tooltipText, deleteOnClick) {
 }
 
 
+// Whether to use the mobile variants of our UI: a touch device with a narrow window. The same test
+// Claude Usage Tracker uses, so the two extensions agree on it.
+//
+// Not orientation (innerHeight > innerWidth), which is what this used to be. On Android the on-screen
+// keyboard shrinks the layout viewport, so opening it turned a phone "landscape" and flipped
+// everything back to the desktop layout for as long as the user was typing. Neither input here moves
+// when the keyboard opens. A narrow desktop window, which orientation used to catch, stays desktop
+// and is handled by the button bar collapsing into its menu when the header runs out of width.
+function isMobileLayout() {
+	return matchMedia('(pointer: coarse)').matches && window.innerWidth < 768;
+}
+
 // ======== PAGE LAYOUTS ========
 // Modular layout registry for button injection targets.
 // Each layout has match() to detect the page, getAnchor() to find the DOM insertion point.
@@ -1252,7 +1264,7 @@ const pageLayouts = {
 		getAnchor() {
 			const actionsSlot = document.querySelector('#dframe-header-actions-slot');
 			if (!actionsSlot) return null;
-			return { parent: actionsSlot.parentElement, referenceNode: actionsSlot, mode: 'inline' };
+			return { parent: actionsSlot.parentElement, referenceNode: actionsSlot, mode: 'inline', fitToHeader: true };
 		},
 	},
 	chatActions: {
@@ -1264,14 +1276,14 @@ const pageLayouts = {
 		getAnchor() {
 			const chatActions = document.querySelector('[data-testid="chat-actions"]');
 			if (!chatActions) return null;
-			const isMobile = window.innerHeight > window.innerWidth;
+			const isMobile = isMobileLayout();
 			if (isMobile) {
 				const header = chatActions.closest('header');
 				if (header) {
 					return { parent: header, referenceNode: null, mode: 'inline' };
 				}
 			}
-			return { parent: chatActions.parentElement, referenceNode: chatActions, mode: 'inline' };
+			return { parent: chatActions.parentElement, referenceNode: chatActions, mode: 'inline', fitToHeader: true };
 		},
 	},
 	chatWiggle: {
@@ -1287,9 +1299,9 @@ const pageLayouts = {
 			if (!wiggle) return null;
 			const actionsSlot = wiggle.closest('#dframe-header-actions-slot');
 			if (actionsSlot) {
-				return { parent: actionsSlot.parentElement, referenceNode: actionsSlot, mode: 'inline' };
+				return { parent: actionsSlot.parentElement, referenceNode: actionsSlot, mode: 'inline', fitToHeader: true };
 			}
-			const isMobile = window.innerHeight > window.innerWidth;
+			const isMobile = isMobileLayout();
 			if (isMobile) {
 				return { parent: wiggle.parentElement, referenceNode: wiggle.nextElementSibling, mode: 'wiggle' };
 			}
@@ -1368,6 +1380,16 @@ const ButtonBar = {
 	_pollInterval: null,
 	_container: null,
 	_currentGroup: null,
+	// Buttons moved into the "More actions" menu because the header ran out of width (see
+	// _fitToHeader). Insertion order is collapse order, so the last entry is the first to come back.
+	// Each maps to the button's width when it was collapsed, which is what restoring it will cost.
+	_overflowed: new Map(),
+	_fitScope: null,
+	_fitScopeGroup: null,
+	_fitObservedHeader: null,
+	_fitResizeObserver: null,
+	_fitMutationObserver: null,
+	_fitScheduled: false,
 
 	getCurrentGroup() {
 		return this._currentGroup;
@@ -1382,9 +1404,9 @@ const ButtonBar = {
 		if (modalEntry) modalEntry.tooltip = text;
 	},
 
-	register({ buttonClass, createFn, tooltip = '', forceDisplayOnMobile = false, pages, onInjected = null }) {
+	register({ buttonClass, createFn, tooltip = '', forceDisplayOnMobile = false, pages, onInjected = null, menuVisible = null }) {
 		if (this._registrations.has(buttonClass)) return;
-		this._registrations.set(buttonClass, { buttonClass, createFn, tooltip, forceDisplayOnMobile, pages, onInjected });
+		this._registrations.set(buttonClass, { buttonClass, createFn, tooltip, forceDisplayOnMobile, pages, onInjected, menuVisible });
 		if (!this._pollInterval) {
 			this._pollInterval = setInterval(() => this._tick(), 1000);
 			this._tick();
@@ -1417,6 +1439,17 @@ const ButtonBar = {
 		this._ensureContainer(anchor);
 		if (!this._container) return;
 
+		// What overflowed belongs to one header on one page type. Going straight from one fitted
+		// header to another (a narrow chat to a narrow cowork chat) keeps us in fit mode throughout,
+		// so nothing else would clear it, and the next page would start with the last page's buttons
+		// hidden - some of which it doesn't even have.
+		const fitScope = this._container.parentElement;
+		if (fitScope !== this._fitScope || layout.group !== this._fitScopeGroup) {
+			this._fitScope = fitScope;
+			this._fitScopeGroup = layout.group;
+			this._overflowed.clear();
+		}
+
 		this._syncButtons(layout.group);
 
 		if (anchor.mode === 'wiggle') {
@@ -1424,6 +1457,150 @@ const ButtonBar = {
 		} else if (anchor.mode === 'inline') {
 			this._updateInlineOffset();
 		}
+
+		this._observeHeaderForFit(anchor);
+		this._fitToHeader();
+	},
+
+	// ======== HEADER OVERFLOW ========
+	// Inline, the buttons share a fixed-height header row with the page title, the page's own
+	// actions, and anything other extensions put there. In a narrow window that row runs out of
+	// width, and the title group is the only thing in it allowed to shrink. A narrow desktop window (a
+	// side panel open, a half-screen window) isn't a mobile layout (see isMobileLayout), so all the
+	// buttons stayed and squeezed the title to nothing. So collapse buttons into the "More actions"
+	// menu, rightmost first, while anything in the row doesn't fit.
+	//
+	// "Doesn't fit" means squeezed: the row has no free width left, and a row child that is allowed
+	// to shrink has content wider than its box, or has grown taller than the row. Both conditions
+	// matter. Some of claude.ai's own controls overflow their boxes by a few pixels as a matter of
+	// course (the new-chat page's actions slot does), and collapsing can't fix that - it would take
+	// every button away for nothing. A shrink-0 child was never squeezed by us, and a row with slack
+	// isn't short of width.
+	//
+	// It sees an ellipsised title only if the ellipsis is on that child itself, so claude.ai's normal
+	// truncation of a long title doesn't trigger it - but content spilling out of a row child does,
+	// whoever put it there. Claude Usage Tracker relies on this: it keeps its stats line's full width
+	// claimed in the title group and lets it spill, and expects us to make room.
+	//
+	// Opt-in per layout (`fitToHeader` on the anchor): only a header row shared with a title has
+	// something worth making room for, and other anchors sit inside small native button clusters
+	// where the row measurements mean nothing.
+
+	_isHeaderFitMode(anchor) {
+		return anchor?.mode === 'inline' && anchor.fitToHeader === true && !isMobileLayout();
+	},
+
+	_headerRowChildren(header) {
+		return [...header.children].filter(child => {
+			if (child === this._container) return false;
+			const cs = getComputedStyle(child);
+			return cs.display !== 'none' && cs.display !== 'contents'
+				&& cs.position !== 'absolute' && cs.position !== 'fixed';
+		});
+	},
+
+	_headerOverflows(header) {
+		if (this._headerSlack(header) > 1) return false;
+		const rowHeight = header.clientHeight;
+		return this._headerRowChildren(header).some(child => {
+			if ((parseFloat(getComputedStyle(child).flexShrink) || 0) === 0) return false;
+			return child.scrollWidth > child.clientWidth + 1
+				|| child.getBoundingClientRect().height > rowHeight + 1;
+		});
+	},
+
+	// Width the row could still give up: its inner width minus everything that doesn't grow. A
+	// growing child (claude.ai's draggable spacer) is only soaking up leftover space, so it counts
+	// as free.
+	_headerSlack(header) {
+		const cs = getComputedStyle(header);
+		const inner = header.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+		const gap = parseFloat(cs.columnGap) || 0;
+		const children = [...this._headerRowChildren(header), this._container];
+		const used = children
+			.filter(child => child === this._container || (parseFloat(getComputedStyle(child).flexGrow) || 0) === 0)
+			.reduce((sum, child) => sum + child.getBoundingClientRect().width, 0);
+		return inner - used - gap * Math.max(0, children.length - 1);
+	},
+
+	_fitToHeader() {
+		const container = this._container;
+		const header = container?.parentElement;
+		const layout = this._detectLayout();
+		const anchor = layout?.getAnchor();
+		if (!header || !this._isHeaderFitMode(anchor)) {
+			if (this._overflowed.size > 0) {
+				this._overflowed.clear();
+				if (layout) this._syncButtons(layout.group);
+			}
+			return;
+		}
+
+		const gap = parseFloat(getComputedStyle(container).columnGap) || 0;
+		const collapsible = () => [...container.querySelectorAll('button')]
+			// A button that isn't rendered (hidden by its own feature) frees nothing by collapsing.
+			.filter(btn => !btn.classList.contains('more-actions-button') && btn.getBoundingClientRect().width > 0)
+			.map(btn => [...this._registrations.keys()].find(cls => btn.classList.contains(cls)))
+			.filter(Boolean);
+
+		// Collapse, rightmost first, until the row fits or there is nothing left to collapse.
+		let changed = false;
+		while (this._headerOverflows(header)) {
+			const visible = collapsible();
+			if (visible.length === 0) break;
+			const buttonClass = visible[visible.length - 1];
+			const width = container.querySelector('.' + buttonClass).getBoundingClientRect().width;
+			this._overflowed.set(buttonClass, width);
+			this._syncButtons(layout.group);
+			changed = true;
+		}
+
+		// Restore, last collapsed first, only when the row has room for the button - and, when it is
+		// the last one out, counting the "More actions" button it lets us drop. The width test is what
+		// keeps this from flapping: without it we would restore into an overflow, collapse again on the
+		// next check, and repeat. Checked again afterwards in case the estimate was wrong.
+		while (!changed && this._overflowed.size > 0) {
+			const [buttonClass, width] = [...this._overflowed].pop();
+			const moreButton = container.querySelector('.more-actions-button');
+			const freed = this._overflowed.size === 1 && moreButton ? moreButton.getBoundingClientRect().width + gap : 0;
+			if (this._headerSlack(header) + freed < width + gap) break;
+			this._overflowed.delete(buttonClass);
+			this._syncButtons(layout.group);
+			if (this._headerOverflows(header)) {
+				this._overflowed.set(buttonClass, width);
+				this._syncButtons(layout.group);
+				break;
+			}
+		}
+	},
+
+	// Re-fit as soon as the row changes rather than on the next 1s tick: on a resize, and when
+	// anything outside our own container is added, removed or retexted.
+	_observeHeaderForFit(anchor) {
+		const header = this._isHeaderFitMode(anchor) ? this._container?.parentElement : null;
+		if (header === this._fitObservedHeader) return;
+
+		this._fitResizeObserver?.disconnect();
+		this._fitMutationObserver?.disconnect();
+		this._fitObservedHeader = header;
+		if (!header) return;
+
+		this._fitResizeObserver ??= new ResizeObserver(() => this._scheduleFit());
+		this._fitMutationObserver ??= new MutationObserver(records => {
+			// Our own collapses and restores mutate the container; reacting to them would loop.
+			if (records.some(r => !this._container?.contains(r.target))) this._scheduleFit();
+		});
+		this._fitResizeObserver.observe(header);
+		this._fitMutationObserver.observe(header, { childList: true, subtree: true, characterData: true });
+	},
+
+	_scheduleFit() {
+		if (this._fitScheduled) return;
+		this._fitScheduled = true;
+		requestAnimationFrame(() => {
+			this._fitScheduled = false;
+			this._fitToHeader();
+		});
 	},
 
 	_cleanStaleContainers(anchor) {
@@ -1462,7 +1639,7 @@ const ButtonBar = {
 			let container = anchor.parent.querySelector(':scope > .toolbox-buttons');
 			if (!container) {
 				container = document.createElement('div');
-				const isMobileChat = this._currentGroup === 'chat' && window.innerHeight > window.innerWidth;
+				const isMobileChat = this._currentGroup === 'chat' && isMobileLayout();
 				if (anchor.mode === 'wiggle') {
 					if (isMobileChat) {
 						container.className = 'toolbox-buttons flex items-center gap-1 pointer-events-auto self-end px-3 z-20 bg-bg-100 rounded-bl-lg';
@@ -1492,23 +1669,27 @@ const ButtonBar = {
 
 	_syncButtons(group) {
 		const container = this._container;
-		const isMobile = window.innerHeight > window.innerWidth;
+		const isMobile = isMobileLayout();
 		const isChatGroup = group === 'chat';
 
-		// Remove buttons that don't belong to the current group
+		// Remove buttons that don't belong to the current group - from the bar and from the menu, or
+		// the menu keeps offering the previous page's actions.
 		for (const [buttonClass, reg] of this._registrations) {
 			if (!reg.pages.includes(group)) {
 				const existing = container.querySelector('.' + buttonClass);
 				if (existing) existing.remove();
 			}
 		}
+		this._mobileModalButtons = this._mobileModalButtons.filter(b =>
+			this._registrations.get(b.class)?.pages.includes(group));
 
 		for (const [buttonClass, reg] of this._registrations) {
 			// Check if this button should appear on this page type
 			if (!reg.pages.includes(group)) continue;
 
-			// Mobile handling: on chat pages, non-forced buttons go to "More actions" modal
-			if (isMobile && isChatGroup && !reg.forceDisplayOnMobile) {
+			// Mobile handling: on chat pages, non-forced buttons go to "More actions" modal. So does
+			// anything the header had no room for (see _fitToHeader).
+			if ((isMobile && isChatGroup && !reg.forceDisplayOnMobile) || this._overflowed.has(buttonClass)) {
 				// Remove from container if it exists
 				const existing = container.querySelector('.' + buttonClass);
 				if (existing) existing.remove();
@@ -1537,10 +1718,6 @@ const ButtonBar = {
 				const button = reg.createFn();
 				button.classList.add(buttonClass);
 
-				if (isMobile) {
-					button.classList.add('-mx-1.5');
-				}
-
 				if (reg.tooltip) {
 					createClaudeTooltip(button, reg.tooltip);
 				}
@@ -1553,8 +1730,8 @@ const ButtonBar = {
 			}
 		}
 
-		// Handle "More actions" button for mobile on chat pages
-		if (isMobile && isChatGroup && this._mobileModalButtons.length > 0) {
+		// Handle "More actions" button for mobile on chat pages, or for whatever the header overflowed
+		if ((isMobile && isChatGroup || this._overflowed.size > 0) && this._mobileModalButtons.length > 0) {
 			if (!container.querySelector('.more-actions-button')) {
 				const moreButton = createClaudeButton(`
 					<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -1563,7 +1740,7 @@ const ButtonBar = {
 						<circle cx="8" cy="14" r="1.5"/>
 					</svg>
 				`, 'icon');
-				moreButton.classList.add('more-actions-button', '-mx-1.5');
+				moreButton.classList.add('more-actions-button');
 				moreButton.onclick = () => this._showMoreActionsModal();
 				createClaudeTooltip(moreButton, 'More actions');
 				container.appendChild(moreButton);
@@ -1572,6 +1749,11 @@ const ButtonBar = {
 			const moreBtn = container.querySelector('.more-actions-button');
 			if (moreBtn) moreBtn.remove();
 		}
+
+		// The mobile spacing tracks the current mode rather than the one a button was created in: a
+		// button made in the desktop layout stays in the bar when the window crosses into the mobile
+		// one (a rotation, a resize), and vice versa.
+		container.querySelectorAll('button').forEach(btn => btn.classList.toggle('-mx-1.5', isMobile));
 
 		this._reorderButtons();
 	},
@@ -1626,7 +1808,7 @@ const ButtonBar = {
 	},
 
 	_updateWigglePosition(anchor) {
-		if (window.innerHeight > window.innerWidth) return;
+		if (isMobileLayout()) return;
 		const wiggle = anchor.parent.querySelector('[data-testid="wiggle-controls-actions"]');
 		if (wiggle && this._container) {
 			this._container.style.right = (wiggle.offsetWidth + 4) + 'px';
@@ -1639,7 +1821,18 @@ const ButtonBar = {
 		const list = document.createElement('div');
 		list.className = 'space-y-2';
 
-		this._mobileModalButtons.forEach(btnInfo => {
+		// In bar order: header overflow adds entries rightmost first.
+		const barIndex = cls => {
+			const i = this.BUTTON_PRIORITY.indexOf(cls);
+			return i === -1 ? this.BUTTON_PRIORITY.length : i;
+		};
+		// A menu entry is rebuilt from createFn and never passed to onInjected, so a button that hides
+		// itself (the banner watcher, with no active flags) can't do so here. Its menuVisible() says
+		// whether it would currently be shown.
+		const entries = this._mobileModalButtons
+			.filter(btnInfo => this._registrations.get(btnInfo.class)?.menuVisible?.() ?? true)
+			.sort((a, b) => barIndex(a.class) - barIndex(b.class));
+		entries.forEach(btnInfo => {
 			const button = btnInfo.createFn();
 			const item = document.createElement('div');
 			item.className = 'p-3 rounded bg-bg-200 border border-border-300 hover:bg-bg-300 cursor-pointer transition-colors flex items-center gap-3';
