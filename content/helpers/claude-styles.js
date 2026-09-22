@@ -1676,7 +1676,7 @@ function findMessageControls(messageElement) {
 
 	// New UI: the role="toolbar" element is itself the justify-between flex row
 	// that directly contains the action buttons.
-	const toolbar = messageContainer.querySelector('[role="toolbar"][aria-label="Message actions"]');
+	const toolbar = messageContainer.querySelector('[data-testid="message-actions"], [role="toolbar"][aria-label="Message actions"]');
 	if (toolbar) return toolbar;
 
 	// Legacy UI: role="group" wrapper with a .justify-between child.
