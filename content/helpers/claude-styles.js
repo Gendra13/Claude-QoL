@@ -63,6 +63,10 @@ if (document.head) document.head.appendChild(toolboxStyles);
 
 // Component creators
 class ClaudeModal {
+	// Visible modals, in show order. Escape only ever dismisses the topmost one,
+	// so an alert stacked on a prompt doesn't also cancel the prompt.
+	static _openStack = [];
+
 	constructor(title = '', content = '', dismissible = true) {
 		this.config = { title, content, dismissible };
 		this.isVisible = false;
@@ -135,13 +139,17 @@ class ClaudeModal {
 		}
 	}
 
-	_attachEventListeners() {
-		this._handleEscape = (e) => {
-			if (e.key === 'Escape' && this.isVisible && this.config.dismissible) {
-				this.hide();
-			}
-		};
+	// Escape / backdrop click. Behaves exactly like clicking Cancel, so a modal
+	// whose caller waits on its Cancel handler can't be left hanging.
+	dismiss() {
+		if (this.dismissButton) {
+			this.dismissButton.click();
+		} else {
+			this.destroy();
+		}
+	}
 
+	_attachEventListeners() {
 		// Track where the mousedown occurred
 		let mouseDownOnBackdrop = false;
 
@@ -153,7 +161,7 @@ class ClaudeModal {
 		this.backdrop.addEventListener('mouseup', (e) => {
 			// Only close if both mousedown AND mouseup were on backdrop
 			if (mouseDownOnBackdrop && e.target === this.backdrop && this.config.dismissible) {
-				this.hide();
+				this.dismiss();
 			}
 			// Reset flag
 			mouseDownOnBackdrop = false;
@@ -192,7 +200,8 @@ class ClaudeModal {
 	}
 
 	addCancel(text = 'Cancel', onClick = null) {
-		return this.addButton(text, 'secondary', onClick, true);
+		this.dismissButton = this.addButton(text, 'secondary', onClick, true);
+		return this.dismissButton;
 	}
 
 	addConfirm(text = 'Confirm', onClick = null, closeOnClick = true) {
@@ -210,7 +219,7 @@ class ClaudeModal {
 
 		this.backdrop.style.display = 'flex';
 		document.body.appendChild(this.backdrop);
-		document.addEventListener('keydown', this._handleEscape);
+		ClaudeModal._openStack.push(this);
 		this.isVisible = true;
 
 		// Steal focus
@@ -224,7 +233,7 @@ class ClaudeModal {
 		if (!this.isVisible) return this;
 
 		this.backdrop.style.display = 'none';
-		document.removeEventListener('keydown', this._handleEscape);
+		ClaudeModal._openStack.splice(ClaudeModal._openStack.indexOf(this), 1);
 		this.isVisible = false;
 
 		return this;
@@ -246,6 +255,12 @@ class ClaudeModal {
 		return this;
 	}
 }
+
+document.addEventListener('keydown', (e) => {
+	if (e.key !== 'Escape') return;
+	const top = ClaudeModal._openStack.at(-1);
+	if (top?.config.dismissible) top.dismiss();
+});
 
 function createLoadingContent(text) {
 	const div = document.createElement('div');
@@ -293,14 +308,6 @@ function showClaudeConfirm(title, message) {
 		modal.addConfirm('Confirm', () => {
 			resolve(true);
 		});
-
-		// Override backdrop click to resolve with false
-		modal.backdrop.onclick = (e) => {
-			if (e.target === modal.backdrop) {
-				modal.hide();
-				resolve(false);
-			}
-		};
 
 		modal.show();
 	});
@@ -437,7 +444,8 @@ function showClaudeAlert(title, message, buttonText = 'OK') {
 		}
 
 		const modal = new ClaudeModal(title, contentDiv);
-		modal.addButton(buttonText, 'primary', () => {
+		// Its only button is the acknowledgement, so dismissing counts as clicking it.
+		modal.dismissButton = modal.addButton(buttonText, 'primary', () => {
 			resolve();
 		});
 		modal.show();
