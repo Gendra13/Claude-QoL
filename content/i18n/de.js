@@ -1,12 +1,8 @@
-// German - keys mirror en.js. See content/helpers/i18n.js.
-(globalThis.QOL_I18N ??= {})['de'] = {
+// German - keys mirror en.js. See common/i18n/i18n-core.js.
+Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['de'] ??= {}, {
 	// common
-	"common.cancel": "Abbrechen",
-	"common.confirm": "Bestätigen",
-	"common.ok": "OK",
 	"common.save": "Speichern",
 	"common.close": "Schließen",
-	"common.loading": "Wird geladen...",
 	"common.error": "Fehler",
 	"common.go_to_latest": "Zur neuesten",
 	"common.go_to_longest": "Zum längsten",
@@ -16,7 +12,6 @@
 	"lang.tooltip": "Sprache",
 	"lang.title": "Toolbox-Sprache",
 	"lang.label": "Sprache",
-	"lang.auto": "Automatisch (Kontosprache)",
 
 	// nav
 	"nav.add_bookmark_title": "Lesezeichen hinzufügen",
@@ -98,9 +93,6 @@
 	"ui.settings_mismatch_code_execution": "Codeausführung: ursprünglich {was} | aktuell {now}",
 	"ui.settings_mismatch_title": "Abweichende Einstellungen",
 	"ui.settings_mismatch_body": "Die Quellunterhaltung hat andere Einstellungen:\n{mismatches}\n\nDie neue Unterhaltung verwendet Ihre aktuellen Einstellungen. Hinweis: Funktionen, die beim Erstellen einer Unterhaltung AUS sind, können darin später nie aktiviert werden. Brechen Sie bei Bedarf ab und passen Sie zuerst Ihre Einstellungen an.",
-	"ui.validation_error": "Validierungsfehler",
-	"ui.none_available": "Keine verfügbar",
-	"ui.search_placeholder": "Suchen...",
 	"ui.more_actions": "Weitere Aktionen",
 	"ui.more_actions_title": "Weitere Aktionen",
 	"ui.reconstructed_from_chatlog": "Aus Chatverlauf rekonstruiert",
@@ -183,15 +175,6 @@
 	"export.replace_warning": "<strong>Nur visuelle Änderung:</strong> Dies ersetzt, was Sie im Chatverlauf sehen. Der Kontext der KI (was sie tatsächlich lesen kann) bleibt unverändert.",
 	"export.modal_title": "Export & Import",
 	"export.tooltip": "Chat exportieren/importieren",
-
-	// notif
-	"notif.kofi_alt": "Spendiere mir einen Kaffee auf ko-fi.com",
-	"notif.updated_to": "Auf v{version} aktualisiert!",
-	"notif.whats_new": "Neuigkeiten:",
-	"notif.view_release_notes": "Vollständige Versionshinweise anzeigen",
-	"notif.enjoying": "Gefällt Ihnen Claude QoL?",
-	"notif.consider_rating": "Hinterlassen Sie gerne eine Bewertung!",
-	"notif.rate_alt": "Diese Erweiterung bewerten",
 
 	// richcopy
 	"richcopy.timeout": "Zeitüberschreitung",
@@ -374,4 +357,4 @@
 
 	// main
 	"main.rich_copy_no_text": "Kein Textinhalt gefunden",
-};
+});

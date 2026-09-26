@@ -1,12 +1,8 @@
-// French - keys mirror en.js. See content/helpers/i18n.js.
-(globalThis.QOL_I18N ??= {})['fr'] = {
+// French - keys mirror en.js. See common/i18n/i18n-core.js.
+Object.assign((globalThis.CLAUDE_EXT_I18N ??= {})['fr'] ??= {}, {
 	// common
-	"common.cancel": "Annuler",
-	"common.confirm": "Confirmer",
-	"common.ok": "OK",
 	"common.save": "Enregistrer",
 	"common.close": "Fermer",
-	"common.loading": "Chargement...",
 	"common.error": "Erreur",
 	"common.go_to_latest": "Aller au plus récent",
 	"common.go_to_longest": "Aller au plus long",
@@ -16,7 +12,6 @@
 	"lang.tooltip": "Langue",
 	"lang.title": "Langue de Toolbox",
 	"lang.label": "Langue",
-	"lang.auto": "Auto (langue du compte)",
 
 	// nav
 	"nav.add_bookmark_title": "Ajouter un signet",
@@ -98,9 +93,6 @@
 	"ui.settings_mismatch_code_execution": "Exécution de code : à l'origine {was} | actuellement {now}",
 	"ui.settings_mismatch_title": "Paramètres différents",
 	"ui.settings_mismatch_body": "La conversation source utilise des paramètres différents :\n{mismatches}\n\nLa nouvelle conversation utilisera vos paramètres actuels. Remarque : les fonctionnalités DÉSACTIVÉES à la création d'une conversation ne pourront jamais y être activées par la suite. Si nécessaire, annulez et ajustez d'abord vos paramètres.",
-	"ui.validation_error": "Erreur de validation",
-	"ui.none_available": "Aucun disponible",
-	"ui.search_placeholder": "Rechercher...",
 	"ui.more_actions": "Plus d'actions",
 	"ui.more_actions_title": "Plus d'actions",
 	"ui.reconstructed_from_chatlog": "Reconstruit à partir du journal de chat",
@@ -183,15 +175,6 @@
 	"export.replace_warning": "<strong>Changement visuel uniquement :</strong> cela remplace ce que vous voyez dans l'historique du chat. Le contexte de l'IA (ce qu'elle peut réellement lire) reste inchangé.",
 	"export.modal_title": "Export et import",
 	"export.tooltip": "Exporter/importer le chat",
-
-	// notif
-	"notif.kofi_alt": "Offrez-moi un café sur ko-fi.com",
-	"notif.updated_to": "Mis à jour vers la v{version} !",
-	"notif.whats_new": "Nouveautés :",
-	"notif.view_release_notes": "Voir les notes de version complètes",
-	"notif.enjoying": "Vous aimez Claude QoL ?",
-	"notif.consider_rating": "Pensez à laisser une note !",
-	"notif.rate_alt": "Noter cette extension",
 
 	// richcopy
 	"richcopy.timeout": "Délai dépassé",
@@ -374,4 +357,4 @@
 
 	// main
 	"main.rich_copy_no_text": "Aucun contenu texte trouvé",
-};
+});
